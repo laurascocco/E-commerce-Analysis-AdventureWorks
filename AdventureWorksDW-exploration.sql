@@ -11,21 +11,21 @@ SELECT
 FROM DimProduct
 WHERE  
 	ListPrice >= (
-					SELECT AVG(ListPrice) 
-					FROM DimProduct
-					WHERE EnglishProductName LIKE '%Mountain%'
-						);
+			SELECT AVG(ListPrice) 
+			FROM DimProduct
+			WHERE EnglishProductName LIKE '%Mountain%'
+				);
 
 -- List of products sold to resellers or through the internet portal
 
 SELECT *
 FROM DimProduct
 WHERE ProductKey IN (
-						SELECT ProductKey
-						FROM FactResellerSales
-						UNION
-						SELECT ProductKey
-						FROM FactInternetSales );
+			SELECT ProductKey
+			FROM FactResellerSales
+			UNION
+			SELECT ProductKey
+			FROM FactInternetSales );
 
 -- Code and name of customers who placed an order in 2020
 
@@ -34,9 +34,9 @@ SELECT
 	CONCAT(FirstName, ' ', LastName) AS Customer
 FROM DimCustomer
 WHERE CustomerKey IN (
-						SELECT CustomerKey
-						FROM FactInternetSales
-						WHERE YEAR(OrderDate) = 2020);
+			SELECT CustomerKey
+			FROM FactInternetSales
+			WHERE YEAR(OrderDate) = 2020);
 
 
 -- checking if there are 2021 sales
@@ -60,9 +60,9 @@ SELECT
 	OrderDate
 FROM FactResellerSales AS r1
 WHERE r1.OrderDate = (
-						SELECT MAX(r2.OrderDate)
-						FROM FactResellerSales AS r2
-						WHERE r1.ResellerKey = r2.ResellerKey)
+			SELECT MAX(r2.OrderDate)
+			FROM FactResellerSales AS r2
+			WHERE r1.ResellerKey = r2.ResellerKey)
 ORDER BY ResellerKey;
 
 -- Check on the totalproductcost field to see where and how many null values there are
@@ -109,59 +109,6 @@ WHERE Sales.TotalProductCost IS NULL
 
 -- the null values are only in the FactResellerSales because the number doesn't change
 
--- Filling the null values to create the profit column and profit margin column
-
-CREATE VIEW VW_LS_SalesTrans AS (
-
-SELECT 
-	s.SalesOrderNumber,
-	s.SalesOrderLineNumber,
-	s.OrderDate,
-	s.ProductKey,
-	s.OrderQuantity,
-	s.TotalProductCost,
-	s.SalesAmount,
-	s.FlagSales,
-	p.StandardCost,
-	CASE
-		WHEN TotalProductCost IS NULL THEN SalesAmount - OrderQuantity * p.StandardCost
-		ELSE SalesAmount - TotalProductCost
-		--WHEN TotalProductCost IS NOT NULL THEN SalesAmount - TotalProductCost
-		END	AS Profit,
-	CASE
-		WHEN TotalProductCost IS NULL THEN (SalesAmount - OrderQuantity * p.StandardCost)/ SalesAmount 
-		ELSE (SalesAmount - TotalProductCost)/ SalesAmount
-		END	AS ProfitMargin
-FROM (
-		SELECT
-			SalesOrderNumber
-			, SalesOrderLineNumber
-			, OrderDate
-			, ProductKey
-			, OrderQuantity
-			, TotalProductCost
-			, SalesAmount
-			, UnitPrice
-			, ShipDate
-			, 'Reseller'	AS FlagSales
-		FROM FactResellerSales
-		UNION ALL
-		SELECT
-			SalesOrderNumber
-			, SalesOrderLineNumber
-			, OrderDate
-			, ProductKey
-			, OrderQuantity
-			, TotalProductCost
-			, SalesAmount
-			, UnitPrice
-			, ShipDate
-			, 'Internet'
-		FROM FactInternetSales
-	) AS s
-
-INNER JOIN DimProduct AS p
-ON s.ProductKey = p.ProductKey );
 
 -- List of only the products sold, and for each of these, the total revenue per year
 
@@ -216,7 +163,61 @@ ORDER BY
     NumberSales DESC;
 
 
--- I create the views to use on PowerBI
+-- Filling the null values to create the profit column and profit margin column and
+-- creation of the views to use on PowerBI
+
+
+CREATE VIEW VW_LS_Sales AS (
+		
+SELECT
+	Sales.*
+	, p.StandardCost
+	, CASE
+		WHEN TotalProductCost IS NULL THEN SalesAmount - OrderQuantity * p.StandardCost
+		ELSE SalesAmount - TotalProductCost
+		--WHEN TotalProductCost IS NOT NULL THEN SalesAmount - TotalProductCost
+		END	AS Profit
+	, CASE
+		WHEN TotalProductCost IS NULL THEN (SalesAmount - OrderQuantity * p.StandardCost)/ SalesAmount
+		ELSE (SalesAmount - TotalProductCost)/ SalesAmount
+		END	AS ProfitMargin
+FROM (
+		SELECT
+			SalesOrderNumber
+			, SalesOrderLineNumber
+			, OrderDate
+			, ProductKey
+			, SalesTerritoryKey
+			, ResellerKey
+			, null AS CustomerKey
+			, OrderQuantity
+			, UnitPrice
+			, TotalProductCost
+			, SalesAmount
+			, 'Reseller'	AS FlagSales
+		FROM FactResellerSales
+		UNION
+		SELECT
+			SalesOrderNumber
+			, SalesOrderLineNumber
+			, OrderDate
+			, ProductKey
+			, SalesTerritoryKey
+			, null
+			, CustomerKey
+			, OrderQuantity
+			, UnitPrice
+			, TotalProductCost
+			, SalesAmount
+			, 'Internet'
+		FROM FactInternetSales
+	) AS Sales
+JOIN DimProduct AS p
+ON Sales.ProductKey = p.ProductKey
+
+)
+
+
 CREATE VIEW LS_VW_Products AS(
 SELECT 
 	ProductKey,
@@ -260,65 +261,13 @@ INNER JOIN DimGeography AS g
 	ON c.GeographyKey = g.GeographyKey
 	);
 
-CREATE VIEW LS_VW_InternetSales AS(
-SELECT
-	ProductKey,
-	CustomerKey,
-	CAST(OrderDate AS DATE) AS OrderDate,
-	SUM(SalesAmount) AS Sales,
-	SUM(OrderQuantity) AS Quantity,
-	COUNT(SalesOrderLineNumber) AS Transactions,
-	SUM(TotalProductCost) AS TotalProductCost
-FROM FactInternetSales
-GROUP BY ProductKey, CustomerKey, OrderDate
-	);
+CREATE VIEW VW_LS_Geography AS (
+SELECT 
+	SalesTerritoryKey,
+	SalesTerritoryRegion AS Region,
+	SalesTerritoryCountry AS Country,
+	SalesTerritoryGroup AS Continent
+FROM DimSalesTerritory)
 
-CREATE VIEW VW_LS_Sales AS (
-		
-SELECT
-	Sales.*
-	, p.StandardCost
-	, CASE
-		WHEN TotalProductCost IS NULL THEN SalesAmount - OrderQuantity * p.StandardCost
-		ELSE SalesAmount - TotalProductCost
-		--WHEN TotalProductCost IS NOT NULL THEN SalesAmount - TotalProductCost
-		END	AS Profit
-	, CASE
-		WHEN TotalProductCost IS NULL THEN (SalesAmount - OrderQuantity * p.StandardCost)/ SalesAmount
-		ELSE (SalesAmount - TotalProductCost)/ SalesAmount
-		END	AS ProfitMargin
-FROM (
-		SELECT
-			SalesOrderNumber
-			, SalesOrderLineNumber
-			, OrderDate
-			, ProductKey
-			, ResellerKey
-			, null AS CustomerKey
-			, OrderQuantity
-			, UnitPrice
-			, TotalProductCost
-			, SalesAmount
-			, 'Reseller'	AS FlagSales
-		FROM FactResellerSales
-		UNION
-		SELECT
-			SalesOrderNumber
-			, SalesOrderLineNumber
-			, OrderDate
-			, ProductKey
-			, null
-			, CustomerKey
-			, OrderQuantity
-			, UnitPrice
-			, TotalProductCost
-			, SalesAmount
-			, 'Internet'
-		FROM FactInternetSales
-	) AS Sales
-JOIN DimProduct AS p
-ON Sales.ProductKey = p.ProductKey
-
-)
 
 
